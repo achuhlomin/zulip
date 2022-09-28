@@ -419,7 +419,7 @@ p.n-margin {
 
     .column-left .left-sidebar {
         width: $left_sidebar_width;
-        padding-left: 0;
+        padding-left: 10px;
     }
 
     .column-right .right-sidebar {
@@ -435,7 +435,7 @@ p.n-margin {
 .column-middle,
 #compose-content {
     margin-right: $right_sidebar_width;
-    margin-left: $left_sidebar_width;
+    margin-left: 280px;
     position: relative;
 }
 
