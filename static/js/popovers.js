@@ -11,6 +11,7 @@ import render_remind_me_popover_content from "../templates/remind_me_popover_con
 import render_user_group_info_popover from "../templates/user_group_info_popover.hbs";
 import render_user_group_info_popover_content from "../templates/user_group_info_popover_content.hbs";
 import render_user_info_popover_content from "../templates/user_info_popover_content.hbs";
+import render_user_info_popover_manage_menu from "../templates/user_info_popover_manage_menu.hbs";
 import render_user_info_popover_title from "../templates/user_info_popover_title.hbs";
 
 import * as blueslip from "./blueslip";
@@ -61,6 +62,7 @@ let $current_actions_popover_elem;
 let current_flatpickr_instance;
 let $current_message_info_popover_elem;
 let $current_user_info_popover_elem;
+let $current_user_info_popover_manage_menu;
 let $current_playground_links_popover_elem;
 let userlist_placement = "right";
 
@@ -71,6 +73,7 @@ export function clear_for_testing() {
     current_flatpickr_instance = undefined;
     $current_message_info_popover_elem = undefined;
     $current_user_info_popover_elem = undefined;
+    $current_user_info_popover_manage_menu = undefined;
     $current_playground_links_popover_elem = undefined;
     list_of_popovers.length = 0;
     userlist_placement = "right";
@@ -188,6 +191,46 @@ function calculate_info_popover_placement(size, $elt) {
     return undefined;
 }
 
+function hide_user_info_popover_manage_menu() {
+    if ($current_user_info_popover_manage_menu !== undefined) {
+        $current_user_info_popover_manage_menu.popover("destroy");
+        $current_user_info_popover_manage_menu = undefined;
+    }
+}
+
+function show_user_info_popover_manage_menu(element, user) {
+    const $last_popover_elem = $current_user_info_popover_manage_menu;
+    hide_user_info_popover_manage_menu();
+    if ($last_popover_elem !== undefined && $last_popover_elem.get()[0] === element) {
+        return;
+    }
+
+    const is_me = people.is_my_user_id(user.user_id);
+    const is_muted = muted_users.is_user_muted(user.user_id);
+    const is_system_bot = user.is_system_bot;
+    const muting_allowed = !is_me && !user.is_bot;
+
+    const args = {
+        can_mute: muting_allowed && !is_muted,
+        can_manage_user: page_params.is_admin && !is_me && !is_system_bot,
+        can_unmute: muting_allowed && is_muted,
+        is_active: people.is_active_user_for_popover(user.user_id),
+        is_bot: user.is_bot,
+        user_id: user.user_id,
+    };
+
+    const $popover_elt = $(element);
+    $popover_elt.popover({
+        content: render_user_info_popover_manage_menu(args),
+        placement: "bottom",
+        html: true,
+        trigger: "manual",
+    });
+
+    $popover_elt.popover("show");
+    $current_user_info_popover_manage_menu = $popover_elt;
+}
+
 function render_user_info_popover(
     user,
     popover_element,
@@ -207,10 +250,14 @@ function render_user_info_popover(
 
     const muting_allowed = !is_me && !user.is_bot;
     const is_active = people.is_active_user_for_popover(user.user_id);
-    const is_muted = muted_users.is_user_muted(user.user_id);
     const is_system_bot = user.is_system_bot;
     const status_text = user_status.get_status_text(user.user_id);
     const status_emoji_info = user_status.get_status_emoji(user.user_id);
+
+    // TODO: The show_manage_menu calculation can get a lot simpler
+    // if/when we allow muting bot users.
+    const can_manage_user = page_params.is_admin && !is_me && !is_system_bot;
+    const show_manage_menu = muting_allowed || can_manage_user;
 
     const spectator_view = page_params.is_spectator;
     let date_joined;
@@ -227,14 +274,11 @@ function render_user_info_popover(
 
     const args = {
         invisible_mode,
-        can_mute: muting_allowed && !is_muted,
-        can_manage_user: page_params.is_admin && !is_me && !is_system_bot,
         can_send_private_message:
             is_active &&
             !is_me &&
             page_params.realm_private_message_policy !==
                 settings_config.private_message_policy_values.disabled.code,
-        can_unmute: muting_allowed && is_muted,
         display_profile_fields,
         has_message_context,
         is_active,
@@ -246,6 +290,7 @@ function render_user_info_popover(
         private_message_class: private_msg_class,
         sent_by_uri: hash_util.by_sender_url(user.email),
         show_email: settings_data.show_email(),
+        show_manage_menu,
         user_email: people.get_visible_email(user),
         user_full_name: user.full_name,
         user_id: user.user_id,
@@ -270,8 +315,9 @@ function render_user_info_popover(
         }
     }
 
+    const $popover_content = $(render_user_info_popover_content(args));
     popover_element.popover({
-        content: render_user_info_popover_content(args),
+        content: $popover_content.get(0),
         // TODO: Determine whether `fixed` should be applied
         // unconditionally.  Right now, we only do it for the user
         // sidebar version of the popover.
@@ -292,6 +338,10 @@ function render_user_info_popover(
 
     init_email_clipboard();
     init_email_tooltip(user);
+    const $user_name_element = $popover_content.find(".user_full_name");
+    if ($user_name_element.prop("clientWidth") < $user_name_element.prop("scrollWidth")) {
+        $user_name_element.addClass("tippy-zulip-tooltip");
+    }
 
     // Note: We pass the normal-size avatar in initial rendering, and
     // then query the server to replace it with the medium-size
@@ -389,6 +439,21 @@ function get_user_info_popover_items() {
     }
 
     return $("li:not(.divider):visible a", $popover_elt);
+}
+
+function get_user_info_popover_manage_menu_items() {
+    if (!$current_user_info_popover_manage_menu) {
+        blueslip.error("Trying to get menu items when action popover is closed.");
+        return undefined;
+    }
+
+    const popover_data = $current_user_info_popover_manage_menu.data("popover");
+    if (!popover_data) {
+        blueslip.error("Cannot find popover data for actions menu.");
+        return undefined;
+    }
+
+    return $(".user_info_popover_manage_menu li:not(.divider):visible a", popover_data.$tip);
 }
 
 function fetch_group_members(member_ids) {
@@ -702,6 +767,10 @@ export function user_info_popped() {
     return $current_user_info_popover_elem !== undefined;
 }
 
+export function user_info_manage_menu_popped() {
+    return $current_user_info_popover_manage_menu !== undefined;
+}
+
 export function hide_user_info_popover() {
     if (user_info_popped()) {
         $current_user_info_popover_elem.popover("destroy");
@@ -749,6 +818,7 @@ export function hide_user_sidebar_popover() {
 }
 
 function hide_all_user_info_popovers() {
+    hide_user_info_popover_manage_menu();
     hide_message_info_popover();
     hide_user_sidebar_popover();
     hide_user_info_popover();
@@ -782,6 +852,11 @@ export function user_info_popover_for_message_handle_keyboard(key) {
 
 export function user_info_popover_handle_keyboard(key) {
     const $items = get_user_info_popover_items();
+    popover_items_handle_keyboard(key, $items);
+}
+
+export function user_info_popover_manage_menu_handle_keyboard(key) {
+    const $items = get_user_info_popover_manage_menu_items();
     popover_items_handle_keyboard(key, $items);
 }
 
@@ -1041,7 +1116,7 @@ export function register_click_handlers() {
         open_user_status_modal,
     );
 
-    $("body").on("click", ".info_popover_actions .sidebar-popover-mute-user", (e) => {
+    $("body").on("click", ".sidebar-popover-mute-user", (e) => {
         const user_id = elem_to_user_id($(e.target).parents("ul"));
         hide_all_user_info_popovers();
         e.stopPropagation();
@@ -1049,7 +1124,7 @@ export function register_click_handlers() {
         muted_users_ui.confirm_mute_user(user_id);
     });
 
-    $("body").on("click", ".info_popover_actions .sidebar-popover-unmute-user", (e) => {
+    $("body").on("click", ".sidebar-popover-unmute-user", (e) => {
         const user_id = elem_to_user_id($(e.target).parents("ul"));
         hide_all_user_info_popovers();
         muted_users_ui.unmute_user(user_id);
@@ -1347,6 +1422,14 @@ export function register_click_handlers() {
         } else {
             settings_users.show_edit_user_info_modal(user_id, true);
         }
+    });
+
+    $("body").on("click", ".user_info_popover_manage_menu_btn", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const user_id = elem_to_user_id($(e.target).parents("ul"));
+        const user = people.get_by_user_id(user_id);
+        show_user_info_popover_manage_menu(e.target, user);
     });
 }
 

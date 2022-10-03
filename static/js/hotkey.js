@@ -356,6 +356,10 @@ function handle_popover_events(event_name) {
     }
 
     if (popovers.user_info_popped()) {
+        if (popovers.user_info_manage_menu_popped()) {
+            popovers.user_info_popover_manage_menu_handle_keyboard(event_name);
+            return true;
+        }
         popovers.user_info_popover_handle_keyboard(event_name);
         return true;
     }
